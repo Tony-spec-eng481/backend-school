@@ -1,0 +1,36 @@
+{
+  "name": "server-side",
+  "version": "1.0.0",
+  "description": "Backend for eLearning system with Express.js, Supabase, Google Cloud, and SendGrid",
+  "main": "src/app.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "nodemon src/app.js",
+    "test": "jest"
+  },
+  "author": "Your Name",
+  "license": "MIT",
+  "dependencies": {
+    "@google-cloud/storage": "^7.19.0",
+    "@sendgrid/mail": "^8.1.6",
+    "@supabase/supabase-js": "^2.97.0",
+    "agora-access-token": "^2.0.4",
+    "agora-rtc-sdk-ng": "^4.24.2",
+    "agora-rtm-sdk": "^2.2.3-1",
+    "axios": "^1.13.5",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "google-auth-library": "^10.6.1",
+    "gtoken": "^8.0.0",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.0.2",
+    "nodemailer": "^8.0.1"
+  },
+  "devDependencies": {
+    "jest": "^30.2.0",
+    "nodemon": "^3.1.14"
+  }
+}

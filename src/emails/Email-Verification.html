@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trespics School – verify your email</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        }
+        body {
+            background-color: #eaf2f5;  /* soft sky-blue background */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+            margin: 0;
+        }
+        .email-card {
+            max-width: 520px;
+            width: 100%;
+            background: #ffffff;
+            border-radius: 32px;
+            box-shadow: 0 20px 35px -8px rgba(0, 40, 60, 0.2);
+            overflow: hidden;
+            border: 1px solid rgba(0, 85, 102, 0.1);
+        }
+        /* decorative header with school identity */
+        .header-strip {
+            background: linear-gradient(135deg, #0b4e5c 0%, #1b7a8c 100%);
+            padding: 30px 35px 22px 35px;
+            text-align: left;
+        }
+        .school-name {
+            font-size: 32px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            color: white;
+            line-height: 1.1;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .school-tagline {
+            color: #c2e9f2;
+            font-size: 16px;
+            margin-top: 6px;
+            font-weight: 400;
+            opacity: 0.9;
+        }
+        .content {
+            padding: 30px 35px 35px 35px;
+        }
+        .greeting {
+            font-size: 18px;
+            color: #1e3b40;
+            font-weight: 500;
+            margin-bottom: 15px;
+        }
+        .message {
+            font-size: 16px;
+            color: #244e58;
+            line-height: 1.5;
+            margin-bottom: 28px;
+        }
+        /* verification link card style */
+        .link-container {
+            background: #f0f9fc;
+            border-radius: 20px;
+            padding: 22px 20px;
+            border: 1px dashed #52b9cf;
+            margin-bottom: 28px;
+            text-align: center;
+        }
+        .link-label {
+            font-size: 15px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: #0b6f82;
+            margin-bottom: 12px;
+        }
+        .verify-link {
+            background: white;
+            padding: 14px 16px;
+            border-radius: 60px;
+            display: inline-block;
+            box-shadow: 0 4px 10px rgba(0,105,120,0.1);
+            border: 1px solid #9fd8e6;
+            transition: background 0.2s;
+            word-break: break-all;
+        }
+        .verify-link a {
+            color: #117a8f;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        .verify-link a span {
+            font-size: 20px;
+        }
+        .verify-link:hover {
+            background: #e1f4f9;
+        }
+        /* note about admission number */
+        .info-box {
+            background-color: #fef6e6;
+            border-left: 5px solid #f4b740;
+            border-radius: 16px;
+            padding: 20px 20px;
+            margin-top: 5px;
+            margin-bottom: 25px;
+        }
+        .info-box p {
+            font-size: 15.5px;
+            color: #4f4a3a;
+            line-height: 1.5;
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+        }
+        .info-icon {
+            font-size: 22px;
+            color: #c57f1e;
+        }
+        .divider {
+            height: 1px;
+            background: linear-gradient(to right, transparent, #b9dbe5, transparent);
+            margin: 20px 0 15px 0;
+        }
+        .footer-note {
+            font-size: 14px;
+            color: #6a909b;
+            text-align: center;
+            margin-top: 5px;
+        }
+        .footer-note a {
+            color: #0b6f82;
+            text-decoration: underline;
+            font-weight: 500;
+        }
+        .button-fallback {
+            margin-top: 10px;
+            font-size: 14px;
+            background: #e0f0f5;
+            border-radius: 40px;
+            padding: 8px 16px;
+            color: #135e6b;
+            display: inline-block;
+        }
+        /* ensure mobile-friendly */
+        @media (max-width: 480px) {
+            .header-strip { padding: 25px 20px 18px; }
+            .content { padding: 25px 20px; }
+            .school-name { font-size: 28px; }
+            .verify-link a { font-size: 14px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="email-card">
+        <!-- top band with school name -->
+        <div class="header-strip">
+            <div class="school-name">Trespics School</div>
+            <div class="school-tagline">excellence · integrity · discovery</div>
+        </div>
+
+        <!-- main content -->
+        <div class="content">
+            <div class="greeting">📬 Hello there,</div>
+            <div class="message">
+                You’re almost part of the Trespics family! Please verify your email address to activate your account.
+            </div>
+            
+            <!-- verification link block (prominent) -->
+            <div class="link-container">
+                <div class="link-label">🔗 VERIFICATION LINK</div>
+                <div class="verify-link">
+                    <!-- in real email, replace # with your dynamic link -->
+                    <a href="{{VERIFY_LINK}}" target="_blank">
+                        <span>🔐</span> {{VERIFY_LINK}}
+                    </a>
+                </div>  
+                <!-- subtle fallback note -->
+                <div style="margin-top: 12px; font-size: 14px; color: #2c6e7e;">
+                    Click the button above or copy the link.
+                </div>
+            </div>
+            
+            <!-- Important info: admission number will follow -->
+            <div class="info-box">
+                <p>
+                    <span class="info-icon">📋</span>
+                    <span><strong>After verification</strong> – an email containing your <strong>admission number / ID</strong> will be sent to this same email account. Keep an eye on your inbox (and spam folder).</span>
+                </p>
+            </div>
+            
+            <!-- subtle extra reassurance -->
+            <div class="divider"></div>
+            <div class="footer-note">
+                ⏳ The link expires in 24 hours. <br>If you didn’t register at Trespics, you can ignore this email.
+                <div style="margin-top: 20px;">
+                    <span style="background:#eef7f9; padding:5px 16px; border-radius:50px; font-size:13px; color:#1b5c68;">🏫 Trespics School – admissions</span>
+                </div>
+            </div>
+            
+            <!-- invisible technical: plain text link for very old clients (display none? but we can show lightly) -->
+            <div style="margin-top: 25px; font-size: 12px; color: #9bb7c0; text-align: center; border-top: 1px dashed #cde3e9; padding-top: 12px;">
+                <span style="opacity: 0.7;">📎 direct link: </span>
+                <span style="word-break: break-all;">{{VERIFY_LINK}}</span>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
