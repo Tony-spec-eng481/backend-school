@@ -84,7 +84,7 @@ const notifyAdminsNewRegistration = async (
         ADMIN_URL: verificationUrl,
       });
 
-      await sendEmail(admin.email, `New ${userRole} Registration Alert`, html);
+    sendEmail(admin.email, `New ${userRole} Registration Alert`, html);
     }
   } catch (error) {
     console.error("Failed to send admin notifications:", error);
@@ -151,7 +151,7 @@ export const registerStaff = async (req, res) => {
         USER_ID: generatedId,
       });
 
-      await sendEmail(
+      sendEmail(
         email,
         "Welcome to Trespics School - Your Account is Ready",
         html,
@@ -268,7 +268,7 @@ export const register = async (req, res) => {
       VERIFY_LINK: verifyLink,
     });
 
-    await sendEmail(
+    sendEmail(
       email,
       "Verify your Trespics School Account",
       html,
@@ -418,7 +418,7 @@ export const registerTeacher = async (req, res) => {
     });
 
     try {
-      await sendEmail(
+      sendEmail(
         email,
         "Verify your Trespics School Account",
         html,
@@ -521,7 +521,7 @@ export const verifyEmail = async (req, res) => {
         DEPARTMENT: deptName,
       });
 
-      await sendEmail(
+      sendEmail(
         user.email,
         "Welcome to Trespics School - Admission Successful",
         html,
@@ -757,7 +757,7 @@ export const forgotPassword = async (req, res) => {
       RESET_LINK: resetLink,
     });
 
-    await sendEmail(email, "Reset Your Trespics Password", html);
+    sendEmail(email, "Reset Your Trespics Password", html);
 
     res.json({
       message:
@@ -989,7 +989,7 @@ export const registerAdminSelf = async (req, res) => {
     let html = loadTemplate("Email-Verification.html");
     html = replacePlaceholders(html, { VERIFY_LINK: verifyLink });
 
-    await sendEmail(email, "Verify your Admin Account", html);
+    sendEmail(email, "Verify your Admin Account", html);
 
     res.status(201).json({
       message:
