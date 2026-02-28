@@ -10,7 +10,6 @@ import {
   updateProfile,
   registerTeacher,
   getDepartments,
-  updateTeacherProfile,
   verifyEmail,
   registerAdminSelf
 } from '../controllers/authController.js';
@@ -46,10 +45,6 @@ router.get('/verify-email/:token', verifyEmail);
 router.get('/profile', authenticate, (req, res) => {
   res.json({ message: 'Profile accessed', user: req.user });
 });
-router.patch('/update-teacher-profile', authenticate, authorizeRoles('teacher'), upload.fields([
-  { name: 'nationalIdPhoto', maxCount: 1 },
-  { name: 'profilePhoto', maxCount: 1 }
-]), updateTeacherProfile);
 
 // Admin only
 router.get(

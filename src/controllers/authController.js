@@ -876,46 +876,6 @@ export const updateProfile = async (req, res) => {
   }
 };
 
-export const updateTeacherProfile = async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const { national_id_number } = req.body;
-
-    // Build update object with only provided values
-    const updates = {};
-    if (national_id_number) updates.national_id_number = national_id_number;
-
-    if (req.files) {
-      if (req.files.nationalIdPhoto?.[0]) {
-        updates.national_id_photo_url = await uploadToGCS(req.files.nationalIdPhoto[0]);
-      }
-      if (req.files.profilePhoto?.[0]) {
-        updates.profile_photo_url = await uploadToGCS(req.files.profilePhoto[0]);
-      }
-    }
-
-    if (Object.keys(updates).length === 0) {
-      return res.status(400).json({ error: "No fields to update" });
-    }
-
-    updates.updated_at = new Date().toISOString();
-
-    const { error } = await supabase
-      .from("teacher_details")
-      .update(updates)
-      .eq("user_id", userId);
-
-    if (error) throw error;
-
-    console.log(`[Auth] Teacher profile updated for user ${userId}`);
-    res.json({ message: "Profile updated successfully" });
-  } catch (err) {
-    console.error("[Auth] Update teacher profile error:", err.message);
-    res.status(500).json({ error: "Failed to update teacher profile" });
-  }
-};
-
-
 /* ================================
    ADMIN SELF-REGISTRATION
 ================================ */

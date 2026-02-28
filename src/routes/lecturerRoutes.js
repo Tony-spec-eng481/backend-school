@@ -7,8 +7,16 @@ import upload from "../middleware/uploadMiddleware.js";
 
 const router = express.Router();
 
-// --- ROUTES ---
+// --- ROUTES ---   
 // All routes require authentication as a lecturer
+
+// Profile
+router.get(
+  "/profile",
+  authenticate,
+  authorizeRoles("teacher", "lecturer"),
+  lecturerController.getTeacherProfile,
+);
 
 // Overview
 router.get(
@@ -114,6 +122,15 @@ router.get(
   authorizeRoles("teacher", "lecturer"),
   lecturerController.getLecturerLiveClasses,
 );
-
+router.patch(
+  "/update-teacher-profile",
+  authenticate,
+  authorizeRoles("teacher"),
+  upload.fields([
+    { name: "nationalIdPhoto", maxCount: 1 },
+    { name: "profilePhoto", maxCount: 1 },
+  ]),
+  lecturerController.updateTeacherProfile,
+);
 export default router;
       

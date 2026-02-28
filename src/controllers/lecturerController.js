@@ -2,7 +2,7 @@ import supabase from '../config/supabase.js';
 import { uploadToGCS } from '../utils/gcsUtils.js';
 
 const getLecturerId = (req) => req.user.id;
-
+   
 /**
  * GET /api/lecturer/overview
  */
@@ -529,5 +529,93 @@ export const getLecturerLiveClasses = async (req, res) => {
   } catch (err) {
     console.error("[lecturerController.getLecturerLiveClasses] Error:", err.message);
     res.status(500).json({ error: 'Failed to fetch live classes' });
+  }
+};
+
+
+export const updateTeacherProfile = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { national_id_number } = req.body;
+
+    // Build update object with only provided values
+    const updates = {};
+    if (national_id_number) updates.national_id_number = national_id_number;
+
+    if (req.files) {
+      if (req.files.nationalIdPhoto?.[0]) {
+        updates.national_id_photo_url = await uploadToGCS(req.files.nationalIdPhoto[0]);
+      }
+      if (req.files.profilePhoto?.[0]) {
+        updates.profile_photo_url = await uploadToGCS(req.files.profilePhoto[0]);
+      }
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: "No fields to update" });
+    }
+
+    updates.updated_at = new Date().toISOString();
+
+    const { data: updatedDetails, error } = await supabase
+      .from("teacher_details")
+      .update(updates)
+      .eq("user_id", userId)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    console.log(`[Auth] Teacher profile updated for user ${userId}`);
+    res.json({ message: "Profile updated successfully", teacherDetails: updatedDetails });
+  } catch (err) {
+    console.error("[Auth] Update teacher profile error:", err.message);
+    res.status(500).json({ error: "Failed to update teacher profile" });
+  }
+};
+
+/**
+ * GET /api/lecturer/profile
+ * Get full profile of the logged-in lecturer
+ */
+export const getTeacherProfile = async (req, res) => {
+  const userId = req.user.id;
+  try {
+    // 1. Get base user details
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('id, name, email')
+      .eq('id', userId)
+      .single();
+
+    if (userError) throw userError;
+
+    // 2. Get teacher specific details, along with department name
+    const { data: teacherDetails, error: detailsError } = await supabase
+      .from('teacher_details')
+      .select(`
+        teacher_id, 
+        department_id, 
+        national_id_number, 
+        national_id_photo_url, 
+        profile_photo_url,
+        department(name)
+      `)
+      .eq('user_id', userId)
+      .single();
+
+    if (detailsError) throw detailsError;
+
+    // 3. Combine and return
+    const profile = {
+      ...user,
+      ...teacherDetails,
+      department_name: teacherDetails?.department?.name || null
+    };
+
+    res.json(profile);
+  } catch (err) {
+    console.error('[lecturerController.getTeacherProfile] Error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch teacher profile' });
   }
 };
