@@ -34,12 +34,12 @@ router.get(
   lecturerController.getUnits,
 );
 
-// Students by Unit   
+// Students by Course   
 router.get(
-  "/units/:unitId/students",
+  "/courses/:courseId/students",
   authenticate,
   authorizeRoles("teacher", "lecturer"),
-  lecturerController.getStudentsByUnit,
+  lecturerController.getStudentsByCourse,
 );
 
 // Programs

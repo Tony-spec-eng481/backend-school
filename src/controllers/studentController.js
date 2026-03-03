@@ -141,7 +141,7 @@ export const getEnrolledCourses = async (req, res) => {
         completed,
         last_accessed,
         course:program_id (
-          id,
+          id,    
           title,
           description,
           thumbnail_url,

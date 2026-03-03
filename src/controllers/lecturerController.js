@@ -104,6 +104,9 @@ export const getUnits = async (req, res) => {
         .maybeSingle();
       
       return {
+        id: item.id, // the PK from lecturer_units
+        unit_id: item.unit_id,
+        program_id: item.program_id,
         ...item.units,
         program: item.courses,
         semester: pu?.semester,
@@ -480,24 +483,44 @@ export const getSubmissions = async (req, res) => {
 };
 
 /**
- * GET /api/lecturer/units/:unitId/students
+ * GET /api/lecturer/courses/:courseId/students
  */
-export const getStudentsByUnit = async (req, res) => {
-  const { unitId } = req.params;
+export const getStudentsByCourse = async (req, res) => {
+  const { courseId } = req.params;
+  const tid = getLecturerId(req);
+
   try {
-    const { data, error } = await supabase
-      .from('student_units')
+    // 1️⃣ Security check: Verify lecturer teaches at least one unit in this course (program)
+    const { data: access, error: accessError } = await supabase
+      .from('lecturer_units')
+      .select('id')
+      .eq('lecturer_id', tid)
+      .eq('program_id', courseId)
+      .limit(1)
+      .maybeSingle();
+
+    if (accessError) throw accessError;
+
+    if (!access) {
+      console.warn(`[lecturerController.getStudentsByCourse] Access denied for lecturer ${tid} on course ${courseId}`);
+      return res.status(403).json({ error: 'Access denied. You do not teach any units in this course.' });
+    }
+
+    // 2️⃣ Get students enrolled in this course (program)
+    const { data: enrollments, error: enrollmentError } = await supabase
+      .from('enrollments')
       .select('student_id')
-      .eq('unit_id', unitId);
+      .eq('program_id', courseId);
 
-    if (error) throw error;
+    if (enrollmentError) throw enrollmentError;
 
-    if (!data || data.length === 0) {
+    if (!enrollments || enrollments.length === 0) {
       return res.json([]);
     }
 
-    // Get user details for each student
-    const studentIds = data.map(s => s.student_id);
+    const studentIds = enrollments.map(e => e.student_id);
+
+    // 3️⃣ Get user details
     const { data: students, error: userError } = await supabase
       .from('users')
       .select('id, name, email')
@@ -506,8 +529,9 @@ export const getStudentsByUnit = async (req, res) => {
     if (userError) throw userError;
 
     res.json(students || []);
+
   } catch (err) {
-    console.error('[lecturerController.getStudentsByUnit] Error:', err.message);
+    console.error('[lecturerController.getStudentsByCourse] Error:', err.message);
     res.status(500).json({ error: 'Failed to fetch students' });
   }
 };

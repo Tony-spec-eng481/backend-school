@@ -438,7 +438,7 @@ export const registerTeacher = async (req, res) => {
 
     // Success response
     res.status(201).json({
-      message: "Teacher registration successful. Awaiting admin verification.",
+      message: "Teacher registration successful. Check your email to verify your account and receive your Teacher ID.",
       teacher_id: generatedId,
     });
   } catch (error) {
