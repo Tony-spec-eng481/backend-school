@@ -82,15 +82,14 @@ export const generateUserId = async (role, departmentId = null) => {
     // 4️⃣ Build final ID
     // ==============================
     if (roleKey === "student") {
-      // departmentId is passed as courseCode for students
-      return `STU/${departmentId}/${year}/${sequenceString}`;
+      return `STU/TIK/${sequenceString}/${year}`;
     }
 
     if (roleKey === "teacher") {
-      return `TCH/${deptCode}/${year}/${sequenceString}`;
+      return `TCH/${deptCode}/${sequenceString}/${year}`;
     }
 
-    return `ADM/${year}/${sequenceString}`;
+    return `ADM/${sequenceString}/${year}`;
   } catch (err) {
     console.error("ID generation error:", err.message);
     throw err;

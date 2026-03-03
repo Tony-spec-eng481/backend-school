@@ -12,7 +12,9 @@ import {
   getLiveClasses,
   getAnnouncements,
   getTickets,
-  createTicket
+  createTicket,
+  getAvailableCourses,
+  enrollInCourse
 } from '../controllers/studentController.js';
 
 const router = express.Router();
@@ -23,6 +25,8 @@ const guard = [authenticate, authorizeRoles('student')];
 router.get('/stats', ...guard, getStats);
 router.get('/courses', ...guard, getEnrolledCourses);
 router.get('/courses/:id', ...guard, getCoursePlayerDetails);
+router.get('/available-courses', ...guard, getAvailableCourses);
+router.post('/enroll', ...guard, enrollInCourse);
 router.get('/units', ...guard, getStudentUnits);
 router.get('/units/:id', ...guard, getUnitDetails);
 router.get('/assignments', ...guard, getAssignments);

@@ -6,30 +6,38 @@ import supabase from '../config/supabase.js';
 const studentId = (req) => req.user.id;
 
 /* ================================================================
+   HELPER  —  get all enrolled program IDs for a student
+ ================================================================ */
+const getEnrolledProgramIds = async (sid) => {
+  const { data, error } = await supabase
+    .from("enrollments")
+    .select("program_id")
+    .eq("student_id", sid);
+  if (error) throw error;
+  return (data || []).map((e) => e.program_id).filter(Boolean);
+};
+
+const getUnitIdsForPrograms = async (programIds) => {
+  if (programIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from("program_units")
+    .select("unit_id")
+    .in("program_id", programIds);
+  if (error) throw error;
+  return (data || []).map((pu) => pu.unit_id);
+};
+
+/* ================================================================
    DASHBOARD OVERVIEW  —  GET /api/student/stats
  ================================================================ */
 export const getStats = async (req, res) => {
   const sid = studentId(req);
 
   try {
-    /* ===============================
-       0. Get student's program
-    =============================== */
-    const { data: studentDetails, error: sdError } = await supabase
-      .from("student_details")
-      .select("program_id")
-      .eq("user_id", sid)
-      .single();
+    /* 0. Get all enrolled program IDs */
+    const programIds = await getEnrolledProgramIds(sid);
 
-    if (sdError || !studentDetails) {
-      console.error("[studentController.getStats] Student details not found:", sdError?.message);
-      return res.status(404).json({ error: "Student details not found" });
-    }
-
-    const programId = studentDetails.program_id;
-
-    if (!programId) {
-      console.warn("[studentController.getStats] Student has no program assigned");
+    if (programIds.length === 0) {
       return res.json({
         enrolledUnits: 0,
         completedLessons: 0,
@@ -40,26 +48,20 @@ export const getStats = async (req, res) => {
       });
     }
 
-    /* ===============================
-       1. Total Units in program
-    =============================== */
+    /* 1. Total Units across all enrolled programs */
     const { count: enrolledUnits } = await supabase
       .from("program_units")
       .select("*", { count: "exact", head: true })
-      .eq("program_id", programId);
+      .in("program_id", programIds);
 
-    /* ===============================
-       2. Completed Topics
-    =============================== */
+    /* 2. Completed Topics */
     const { count: completedTopics } = await supabase
       .from("progress")
       .select("*", { count: "exact", head: true })
       .eq("student_id", sid)
       .eq("is_completed", true);
-    
-    /* ===============================
-       3. Average Progress
-    =============================== */
+
+    /* 3. Average Progress */
     const { data: enrollments } = await supabase
       .from("enrollments")
       .select("progress")
@@ -73,22 +75,13 @@ export const getStats = async (req, res) => {
           )
         : 0;
 
-    /* ===============================
-       4. Today's Live Classes
-    =============================== */
+    /* 4. Today's Live Classes */
     const todayStart = new Date();
     todayStart.setUTCHours(0, 0, 0, 0);
-
     const todayEnd = new Date();
     todayEnd.setUTCHours(23, 59, 59, 999);
 
-    const { data: programUnits } = await supabase
-      .from("program_units")
-      .select("unit_id")
-      .eq("program_id", programId);
-
-    const unitIds = (programUnits || []).map((u) => u.unit_id);
-
+    const unitIds = await getUnitIdsForPrograms(programIds);
     let liveClassesToday = 0;
 
     if (unitIds.length > 0) {
@@ -102,9 +95,7 @@ export const getStats = async (req, res) => {
       liveClassesToday = count ?? 0;
     }
 
-    /* ===============================
-       5. Certificates
-    =============================== */
+    /* 5. Certificates */
     const { count: certificates } = await supabase
       .from("enrollments")
       .select("*", { count: "exact", head: true })
@@ -171,73 +162,93 @@ export const getEnrolledCourses = async (req, res) => {
 };
 
 /* ================================================================
-   STUDENT UNITS  —  GET /api/student/units
+   STUDENT UNITS (grouped by enrolled course)  —  GET /api/student/units
  ================================================================ */
 export const getStudentUnits = async (req, res) => {
   const sid = req.user.id;
 
   try {
-    // 1. Get the student's course/program
-    const { data: studentDetails, error: sdError } = await supabase
-      .from("student_details")
-      .select("program_id")
-      .eq("user_id", sid)
-      .single();
+    // 1. Get enrolled courses
+    const { data: enrollments, error: enrError } = await supabase
+      .from("enrollments")
+      .select(`
+        id,
+        progress,
+        completed,
+        course:program_id (
+          id, title, description, thumbnail_url, difficulty, short_code
+        )
+      `)
+      .eq("student_id", sid)
+      .order("enrolled_at", { ascending: false });
 
-    if (sdError || !studentDetails) {
-      console.error("[studentController.getStudentUnits] Student not found:", sdError?.message);
-      return res.status(404).json({ error: "Student not found" });
-    }
+    if (enrError) throw enrError;
 
-    const programId = studentDetails.program_id;
-
-    if (!programId) {
+    if (!enrollments || enrollments.length === 0) {
       return res.json([]);
     }
 
-    // 2. Get all units for this program from program_units
-    const { data: programUnits, error: puError } = await supabase
-      .from("program_units")
-      .select(`
-        unit:unit_id (id, title, description),
-        semester,
-        year
-      `)
-      .eq("program_id", programId)
-      .order("semester", { ascending: true })
-      .order("year", { ascending: true });
+    // 2. For each enrolled course, get units
+    const result = await Promise.all(
+      enrollments.map(async (enr) => {
+        if (!enr.course) return null;
+        const courseId = enr.course.id;
 
-    if (puError) throw puError;
+        const { data: programUnits, error: puError } = await supabase
+          .from("program_units")
+          .select(`
+            unit:unit_id (id, title, description),
+            semester,
+            year
+          `)
+          .eq("program_id", courseId)
+          .order("semester", { ascending: true })
+          .order("year", { ascending: true });
 
-    // 3. For each unit, fetch counts separately
-    const shaped = await Promise.all(
-      (programUnits || []).map(async (pu) => {
-        if (!pu.unit) return null;
-        const unitId = pu.unit.id;
+        if (puError) throw puError;
 
-        const { count: topicCount } = await supabase
-          .from("topics")
-          .select("*", { count: "exact", head: true })
-          .eq("unit_id", unitId);
+        const units = await Promise.all(
+          (programUnits || []).map(async (pu) => {
+            if (!pu.unit) return null;
+            const unitId = pu.unit.id;
 
-        const { count: liveClassCount } = await supabase
-          .from("live_classes")
-          .select("*", { count: "exact", head: true })
-          .eq("unit_id", unitId);
+            const { count: topicCount } = await supabase
+              .from("topics")
+              .select("*", { count: "exact", head: true })
+              .eq("unit_id", unitId);
+
+            const { count: liveClassCount } = await supabase
+              .from("live_classes")
+              .select("*", { count: "exact", head: true })
+              .eq("unit_id", unitId);
+
+            return {
+              id: pu.unit.id,
+              title: pu.unit.title,
+              description: pu.unit.description,
+              semester: pu.semester,
+              year: pu.year,
+              topicCount: topicCount ?? 0,
+              liveClassCount: liveClassCount ?? 0,
+            };
+          }),
+        );
 
         return {
-          id: pu.unit.id,
-          title: pu.unit.title,
-          description: pu.unit.description,
-          semester: pu.semester,
-          year: pu.year,
-          topicCount: topicCount ?? 0,
-          liveClassCount: liveClassCount ?? 0,
+          courseId: enr.course.id,
+          courseTitle: enr.course.title,
+          courseDescription: enr.course.description,
+          courseThumbnail: enr.course.thumbnail_url,
+          courseDifficulty: enr.course.difficulty,
+          courseShortCode: enr.course.short_code,
+          progress: enr.progress ?? 0,
+          completed: enr.completed,
+          units: units.filter(Boolean),
         };
       }),
     );
 
-    res.json(shaped.filter(Boolean));
+    res.json(result.filter(Boolean));
   } catch (err) {
     console.error("[studentController.getStudentUnits] Error:", err.message);
     res.status(500).json({ error: "Failed to fetch student units" });
@@ -464,33 +475,11 @@ export const getLiveClasses = async (req, res) => {
   const sid = studentId(req);
 
   try {
-    const { data: sd, error: sdError } = await supabase
-      .from("student_details")
-      .select("program_id")
-      .eq("user_id", sid)
-      .single();
+    const programIds = await getEnrolledProgramIds(sid);
+    if (programIds.length === 0) return res.json([]);
 
-    if (sdError || !sd) {
-      console.error("[studentController.getLiveClasses] Student details not found:", sdError?.message);
-      return res.status(404).json({ error: "Student details not found" });
-    }
-
-    if (!sd.program_id) {
-      return res.json([]);
-    }
-
-    const { data: units, error: unitsError } = await supabase
-      .from("program_units")
-      .select("unit_id")
-      .eq("program_id", sd.program_id);
-
-    if (unitsError) throw unitsError;
-
-    const unitIds = (units || []).map((u) => u.unit_id);
-
-    if (unitIds.length === 0) {
-      return res.json([]);
-    }
+    const unitIds = await getUnitIdsForPrograms(programIds);
+    if (unitIds.length === 0) return res.json([]);
 
     const { data, error } = await supabase
       .from("live_classes")
@@ -521,33 +510,11 @@ export const getAssignments = async (req, res) => {
   const sid = studentId(req);
 
   try {
-    const { data: sd, error: sdError } = await supabase
-      .from("student_details")
-      .select("program_id")
-      .eq("user_id", sid)
-      .single();
+    const programIds = await getEnrolledProgramIds(sid);
+    if (programIds.length === 0) return res.json([]);
 
-    if (sdError || !sd) {
-      console.error("[studentController.getAssignments] Student details not found:", sdError?.message);
-      return res.status(404).json({ error: "Student details not found" });
-    }
-
-    if (!sd.program_id) {
-      return res.json([]);
-    }
-
-    const { data: units, error: unitsError } = await supabase
-      .from("program_units")
-      .select("unit_id")
-      .eq("program_id", sd.program_id);
-
-    if (unitsError) throw unitsError;
-
-    const unitIds = (units || []).map((u) => u.unit_id);
-
-    if (unitIds.length === 0) {
-      return res.json([]);
-    }
+    const unitIds = await getUnitIdsForPrograms(programIds);
+    if (unitIds.length === 0) return res.json([]);
 
     const { data, error } = await supabase
       .from("assignments")
@@ -665,5 +632,139 @@ export const createTicket = async (req, res) => {
   } catch (err) {
     console.error('[studentController.createTicket] Error:', err.message);
     res.status(500).json({ error: "Failed to create ticket" });
+  }
+};
+
+/* ================================================================
+   AVAILABLE COURSES  —  GET /api/student/available-courses
+ ================================================================ */
+export const getAvailableCourses = async (req, res) => {
+  const sid = studentId(req);
+
+  try {
+    // 1. Get all active courses
+    const { data: courses, error: cError } = await supabase
+      .from("courses")
+      .select(`
+        id, title, description, short_code, thumbnail_url,
+        difficulty, duration_weeks, department_id,
+        department:department_id (name)
+      `)
+      .eq("status", "active")
+      .order("title", { ascending: true });
+
+    if (cError) throw cError;
+
+    // 2. Get student's current enrollments
+    const { data: enrollments, error: eError } = await supabase
+      .from("enrollments")
+      .select("program_id, completed")
+      .eq("student_id", sid);
+
+    if (eError) throw eError;
+
+    const enrolledMap = new Map();
+    (enrollments || []).forEach((e) => {
+      enrolledMap.set(e.program_id, e.completed);
+    });
+
+    const activeEnrollments = (enrollments || []).filter((e) => !e.completed).length;
+
+    // 3. Shape response
+    const shaped = (courses || []).map((c) => ({
+      id: c.id,
+      title: c.title,
+      description: c.description,
+      shortCode: c.short_code,
+      thumbnail: c.thumbnail_url,
+      difficulty: c.difficulty,
+      durationWeeks: c.duration_weeks,
+      department: c.department?.name || "N/A",
+      isEnrolled: enrolledMap.has(c.id),
+      isCompleted: enrolledMap.get(c.id) === true,
+      canEnroll: !enrolledMap.has(c.id) && activeEnrollments < 2,
+    }));
+
+    res.json(shaped);
+  } catch (err) {
+    console.error("[studentController.getAvailableCourses] Error:", err.message);
+    res.status(500).json({ error: "Failed to fetch available courses" });
+  }
+};
+
+/* ================================================================
+   ENROLL IN COURSE  —  POST /api/student/enroll
+ ================================================================ */
+export const enrollInCourse = async (req, res) => {
+  const sid = studentId(req);
+  const { courseId } = req.body;
+
+  if (!courseId) {
+    return res.status(400).json({ error: "Course ID is required" });
+  }
+
+  try {
+    // 1. Check if already enrolled
+    const { data: existing } = await supabase
+      .from("enrollments")
+      .select("id")
+      .eq("student_id", sid)
+      .eq("program_id", courseId)
+      .single();
+
+    if (existing) {
+      return res.status(400).json({ error: "Already enrolled in this course" });
+    }
+
+    // 2. Count active (non-completed) enrollments
+    const { data: active, error: countErr } = await supabase
+      .from("enrollments")
+      .select("id")
+      .eq("student_id", sid)
+      .eq("completed", false);
+
+    if (countErr) throw countErr;
+
+    if ((active || []).length >= 2) {
+      return res.status(400).json({
+        error: "Maximum 2 active courses allowed. Complete a course to enroll in a new one.",
+      });
+    }
+
+    // 3. Verify course exists and is active
+    const { data: course, error: courseErr } = await supabase
+      .from("courses")
+      .select("id, title")
+      .eq("id", courseId)
+      .eq("status", "active")
+      .single();
+
+    if (courseErr || !course) {
+      return res.status(404).json({ error: "Course not found or not active" });
+    }
+
+    // 4. Create enrollment
+    const { data: enrollment, error: enrollErr } = await supabase
+      .from("enrollments")
+      .insert({
+        student_id: sid,
+        program_id: courseId,
+        enrolled_at: new Date().toISOString(),
+        progress: 0,
+        completed: false,
+      })
+      .select()
+      .single();
+
+    if (enrollErr) throw enrollErr;
+
+    console.log(`[studentController.enrollInCourse] Student ${sid} enrolled in course ${course.title}`);
+    res.status(201).json({
+      message: `Successfully enrolled in ${course.title}`,
+      enrollment,
+    });
+  } catch (err) {
+    console.error("[studentController.enrollInCourse] Error:", err.message);
+    res.status(500).json({ error: "Failed to enroll in course" });
   }
 };

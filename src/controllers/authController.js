@@ -186,7 +186,7 @@ export const registerStaff = async (req, res) => {
 ================================ */
 
 export const register = async (req, res) => {
-  const { name, email, password, role, courseId } = req.body;
+  const { name, email, password, role } = req.body;
 
   try {
     if (role !== "student") {
@@ -228,26 +228,14 @@ export const register = async (req, res) => {
 
     if (userError) throw userError;
 
-    // 4. Fetch short_code using courseId
-    let courseCodeStr = "GEN";
-    if (courseId) {
-      const { data: courseData } = await supabase
-        .from("courses")
-        .select("short_code")
-        .eq("id", courseId)
-        .single();
-      if (courseData) courseCodeStr = courseData.short_code;
-    }
-
-    // 5. Generate Custom ID and Create user details in respective table
-    const generatedId = await generateUserId(role, courseCodeStr);
+    // 4. Generate Custom ID and Create user details in respective table
+    const generatedId = await generateUserId(role, "GEN");
     let detailsError;
 
     const { error } = await supabase.from("student_details").insert([
       {
         user_id: newUser.id,
         student_id: generatedId,
-        program_id: courseId || null,
         year: new Date().getFullYear(),
       },
     ]);
@@ -288,7 +276,7 @@ export const register = async (req, res) => {
       name,
       email,
       "student",
-      courseCodeStr,
+      "N/A",
       registrationDateStr,
       `${process.env.ADMIN_CLIENT_URL}/dashboard`,
     );
