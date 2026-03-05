@@ -17,6 +17,8 @@ import {
   enrollInCourse
 } from '../controllers/studentController.js';
 
+import upload from '../middleware/uploadMiddleware.js';
+
 const router = express.Router();
 
 // All student routes require authentication
@@ -30,7 +32,7 @@ router.post('/enroll', ...guard, enrollInCourse);
 router.get('/units', ...guard, getStudentUnits);
 router.get('/units/:id', ...guard, getUnitDetails);
 router.get('/assignments', ...guard, getAssignments);
-router.post('/assignments/:id/submit', ...guard, submitAssignment);
+router.post('/assignments/:id/submit', ...guard, upload.single('file'), submitAssignment);
 router.post('/progress/mark-complete', ...guard, markTopicComplete);
 router.get('/live-classes', ...guard, getLiveClasses);
 router.get('/announcements', ...guard, getAnnouncements);

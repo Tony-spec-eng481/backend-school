@@ -145,7 +145,6 @@ CREATE TABLE public.student_details (
     id uuid NOT NULL,
     user_id uuid,
     student_id varchar NOT NULL,
-    program_id uuid,
     year integer,
     created_at timestamptz,
     updated_at timestamptz

@@ -422,6 +422,81 @@ export const createAssignment = async (req, res) => {
   }
 };
 
+/**
+ * PATCH /api/lecturer/assignments/:id
+ */
+export const updateAssignment = async (req, res) => {
+  const { id } = req.params;
+  const tid = getLecturerId(req);
+  const updates = { ...req.body };
+
+  try {
+    // Security check: Verify lecturer owns this assignment
+    const { data: assignment } = await supabase
+      .from('assignments')
+      .select('teacher_id, unit_id')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (!assignment) return res.status(404).json({ error: 'Assignment not found' });
+    if (assignment.teacher_id !== tid) return res.status(403).json({ error: 'Access denied' });
+
+    // Handle file upload if present
+    if (req.file) {
+      updates.file_url = await uploadToGCS(req.file);
+    }
+
+    updates.updated_at = new Date().toISOString();
+
+    const { data, error } = await supabase
+      .from('assignments')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    console.log(`[lecturerController.updateAssignment] Assignment ${id} updated`);
+    res.json(data);
+  } catch (err) {
+    console.error('[lecturerController.updateAssignment] Error:', err.message);
+    res.status(500).json({ error: 'Failed to update assignment' });
+  }
+};
+
+/**
+ * DELETE /api/lecturer/assignments/:id
+ */
+export const deleteAssignment = async (req, res) => {
+  const { id } = req.params;
+  const tid = getLecturerId(req);
+
+  try {
+    // Security check
+    const { data: assignment } = await supabase
+      .from('assignments')
+      .select('teacher_id')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (!assignment) return res.status(404).json({ error: 'Assignment not found' });
+    if (assignment.teacher_id !== tid) return res.status(403).json({ error: 'Access denied' });
+
+    // Delete submission records first (if any)
+    await supabase.from('assignment_submissions').delete().eq('assignment_id', id);
+
+    const { error } = await supabase.from('assignments').delete().eq('id', id);
+    if (error) throw error;
+
+    console.log(`[lecturerController.deleteAssignment] Assignment ${id} deleted`);
+    res.json({ message: 'Assignment deleted successfully' });
+  } catch (err) {
+    console.error('[lecturerController.deleteAssignment] Error:', err.message);
+    res.status(500).json({ error: 'Failed to delete assignment' });
+  }
+};
+
 
 /**
  * GET /api/lecturer/submissions
@@ -448,34 +523,30 @@ export const getSubmissions = async (req, res) => {
       return res.json([]);
     }
 
-    // Get assignments for the target units first
-    const { data: assignments } = await supabase
-      .from('assignments')
-      .select('id, title, unit_id')
-      .in('unit_id', targetUnitIds);
-
-    const assignmentIds = (assignments || []).map(a => a.id);
-
-    if (assignmentIds.length === 0) {
-      return res.json([]);
-    }
-
     const { data: submissions, error } = await supabase
       .from('assignment_submissions')
-      .select('*')
-      .in('assignment_id', assignmentIds)
+      .select(`
+        *,
+        users (
+          name,
+          student_details ( student_id )
+        ),
+        assignments (
+          title,
+          units ( title )
+        )
+      `)
+      .in('assignment_id', (
+        await supabase
+          .from('assignments')
+          .select('id')
+          .in('unit_id', targetUnitIds)
+      ).data?.map(a => a.id) || [])
       .order('submitted_at', { ascending: false });
 
     if (error) throw error;
 
-    // Enrich submissions with assignment titles
-    const assignmentMap = new Map((assignments || []).map(a => [a.id, a]));
-    const enriched = (submissions || []).map(sub => ({
-      ...sub,
-      assignment: assignmentMap.get(sub.assignment_id) || null
-    }));
-
-    res.json(enriched);
+    res.json(submissions || []);
   } catch (err) {
     console.error('[lecturerController.getSubmissions] Error:', err.message);
     res.status(500).json({ error: 'Failed to fetch submissions' });
@@ -491,25 +562,42 @@ export const getStudentsByCourse = async (req, res) => {
 
   try {
     // 1️⃣ Security check: Verify lecturer teaches at least one unit in this course (program)
-    const { data: access, error: accessError } = await supabase
+    const { data: luData, error: accessError } = await supabase
       .from('lecturer_units')
-      .select('id')
+      .select('unit_id')
       .eq('lecturer_id', tid)
-      .eq('program_id', courseId)
-      .limit(1)
-      .maybeSingle();
+      .eq('program_id', courseId);
 
     if (accessError) throw accessError;
 
-    if (!access) {
+    if (!luData || luData.length === 0) {
       console.warn(`[lecturerController.getStudentsByCourse] Access denied for lecturer ${tid} on course ${courseId}`);
       return res.status(403).json({ error: 'Access denied. You do not teach any units in this course.' });
     }
 
-    // 2️⃣ Get students enrolled in this course (program)
+    const unitIds = luData.map(lu => lu.unit_id);
+
+    // 2️⃣ Get total assignments for these units
+    const { data: assignData } = await supabase
+      .from('assignments')
+      .select('id')
+      .in('unit_id', unitIds);
+    
+    const assignmentIds = (assignData || []).map(a => a.id);
+    const totalAssignments = assignmentIds.length;
+
+    // 3️⃣ Get students enrolled in this course (program)
     const { data: enrollments, error: enrollmentError } = await supabase
       .from('enrollments')
-      .select('student_id')
+      .select(`
+        student_id,
+        user:student_id (
+          id, 
+          name, 
+          email,
+          student_details ( student_id )
+        )
+      `)
       .eq('program_id', courseId);
 
     if (enrollmentError) throw enrollmentError;
@@ -518,21 +606,157 @@ export const getStudentsByCourse = async (req, res) => {
       return res.json([]);
     }
 
-    const studentIds = enrollments.map(e => e.student_id);
+    // 4️⃣ Get marked assignment counts for each student
+    const result = await Promise.all(enrollments.map(async (e) => {
+      const u = e.user;
+      if (!u) return null;
 
-    // 3️⃣ Get user details
-    const { data: students, error: userError } = await supabase
-      .from('users')
-      .select('id, name, email')
-      .in('id', studentIds);
+      let markedCount = 0;
+      if (assignmentIds.length > 0) {
+        const { count } = await supabase
+          .from('assignment_submissions')
+          .select('*', { count: 'exact', head: true })
+          .eq('student_id', u.id)
+          .in('assignment_id', assignmentIds)
+          .eq('status', 'marked');
+        markedCount = count ?? 0;
+      }
 
-    if (userError) throw userError;
+      return {
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        student_id: u.student_details?.[0]?.student_id || 'N/A',
+        assignments: totalAssignments,
+        marked_assignments: markedCount
+      };
+    }));
 
-    res.json(students || []);
+    res.json(result.filter(Boolean));
 
   } catch (err) {
     console.error('[lecturerController.getStudentsByCourse] Error:', err.message);
     res.status(500).json({ error: 'Failed to fetch students' });
+  }
+};
+
+/**
+ * GET /api/lecturer/students/:studentId/course/:courseId/assignments
+ */
+export const getStudentAssignmentDetails = async (req, res) => {
+  const { studentId, courseId } = req.params;
+  const tid = getLecturerId(req);
+
+  try {
+    // 1. Get units taught by tid in this course
+    const { data: luData } = await supabase
+      .from('lecturer_units')
+      .select('unit_id')
+      .eq('lecturer_id', tid)
+      .eq('program_id', courseId);
+    
+    const unitIds = (luData || []).map(lu => lu.unit_id);
+
+    // 2. Get assignments
+    const { data: assignments } = await supabase
+      .from('assignments')
+      .select(`
+        *,
+        unit:unit_id ( title )
+      `)
+      .in('unit_id', unitIds);
+
+    if (!assignments || assignments.length === 0) {
+      return res.json({ submitted: [], failed: [] });
+    }
+
+    // 3. Get submissions
+    const { data: submissions } = await supabase
+      .from('assignment_submissions')
+      .select('*')
+      .eq('student_id', studentId)
+      .in('assignment_id', assignments.map(a => a.id));
+
+    const submissionMap = new Map();
+    (submissions || []).forEach(s => submissionMap.set(s.assignment_id, s));
+
+    const submitted = [];
+    const failed = [];
+
+    assignments.forEach(a => {
+      const sub = submissionMap.get(a.id);
+      if (sub) {
+        submitted.push({ ...a, submission: sub });
+      } else {
+        failed.push(a);
+      }
+    });
+
+    res.json({ submitted, failed });
+  } catch (err) {
+    console.error('[lecturerController.getStudentAssignmentDetails] Error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch student assignment details' });
+  }
+};
+
+/**
+ * POST /api/lecturer/grade-assignment
+ * Handles both updating existing submissions and marking unsubmitted ones as 0
+ */
+export const gradeAssignment = async (req, res) => {
+  const tid = getLecturerId(req);
+  const { assignmentId, studentId, score } = req.body;
+
+  if (score < 0 || score > 30) {
+    return res.status(400).json({ error: 'Score must be between 0 and 30' });
+  }
+
+  try {
+    // Check if submission exists
+    const { data: existing } = await supabase
+      .from('assignment_submissions')
+      .select('id')
+      .eq('assignment_id', assignmentId)
+      .eq('student_id', studentId)
+      .maybeSingle();
+
+    let result;
+    if (existing) {
+      const { data, error } = await supabase
+        .from('assignment_submissions')
+        .update({
+          score,
+          status: 'marked',
+          graded_at: new Date().toISOString()
+        })
+        .eq('id', existing.id)
+        .select()
+        .single();
+      if (error) throw error;
+      result = data;
+    } else {
+      // Create a submission record with 0 if marking unsubmitted
+      const { data, error } = await supabase
+        .from('assignment_submissions')
+        .insert({
+          assignment_id: assignmentId,
+          student_id: studentId,
+          score,
+          status: 'marked',
+          answer_text: score === 0 ? 'Automatically recorded 0 (No submission)' : 'Manually graded without submission',
+          graded_at: new Date().toISOString(),
+          submitted_at: new Date().toISOString() // Or null if your schema allows
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      result = data;
+    }
+
+    res.json(result);
+  } catch (err) {
+    console.error('[lecturerController.gradeAssignment] Error:', err.message);
+    res.status(500).json({ error: 'Failed to grade assignment' });
   }
 };
    

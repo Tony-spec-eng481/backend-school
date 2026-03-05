@@ -42,6 +42,22 @@ router.get(
   lecturerController.getStudentsByCourse,
 );
 
+// Student Assignment Details
+router.get(
+  "/students/:studentId/course/:courseId/assignments",
+  authenticate,
+  authorizeRoles("teacher", "lecturer"),
+  lecturerController.getStudentAssignmentDetails,
+);
+
+// Grade Assignment
+router.post(
+  "/grade-assignment",
+  authenticate,
+  authorizeRoles("teacher", "lecturer"),
+  lecturerController.gradeAssignment,
+);
+
 // Programs
 router.get(
   "/programs",
@@ -104,6 +120,21 @@ router.post(
   authorizeRoles("teacher", "lecturer"),
   upload.single("file"),
   lecturerController.createAssignment,
+);
+
+router.patch(
+  "/assignments/:id",
+  authenticate,
+  authorizeRoles("teacher", "lecturer"),
+  upload.single("file"),
+  lecturerController.updateAssignment,
+);
+
+router.delete(
+  "/assignments/:id",
+  authenticate,
+  authorizeRoles("teacher", "lecturer"),
+  lecturerController.deleteAssignment,
 );
 
 

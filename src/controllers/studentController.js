@@ -1,4 +1,5 @@
 import supabase from '../config/supabase.js';
+import { uploadToGCS } from '../utils/gcsUtils.js';
 
 /* ================================================================
    HELPER
@@ -44,6 +45,7 @@ export const getStats = async (req, res) => {
         avgProgress: 0,
         liveClassesToday: 0,
         certificates: 0,
+        pendingAssignments: 0,
         streak: 0,
       });
     }
@@ -102,12 +104,36 @@ export const getStats = async (req, res) => {
       .eq("student_id", sid)
       .eq("completed", true);
 
+    /* 6. Pending Assignments */
+    let pendingAssignments = 0;
+    if (unitIds.length > 0) {
+      // Get all assignments for these units
+      const { data: assignments } = await supabase
+        .from("assignments")
+        .select("id")
+        .in("unit_id", unitIds);
+
+      if (assignments && assignments.length > 0) {
+        const assignmentIds = assignments.map(a => a.id);
+        
+        // Get count of submitted assignments
+        const { count: submittedCount } = await supabase
+          .from("assignment_submissions")
+          .select("*", { count: "exact", head: true })
+          .eq("student_id", sid)
+          .in("assignment_id", assignmentIds);
+
+        pendingAssignments = assignments.length - (submittedCount || 0);
+      }
+    }
+
     res.json({
       enrolledUnits: enrolledUnits ?? 0,
       completedLessons: completedTopics ?? 0,
       avgProgress,
       liveClassesToday,
       certificates: certificates ?? 0,
+      pendingAssignments,
       streak: 0,
     });
   } catch (err) {
@@ -516,15 +542,35 @@ export const getAssignments = async (req, res) => {
     const unitIds = await getUnitIdsForPrograms(programIds);
     if (unitIds.length === 0) return res.json([]);
 
-    const { data, error } = await supabase
+    const { data: assignments, error: assignError } = await supabase
       .from("assignments")
-      .select("*, unit:unit_id(title)")
+      .select("*, unit:unit_id(title, short_code)")
       .in("unit_id", unitIds)
-      .order("due_date", { ascending: true });
+      .order("created_at", { ascending: false });
 
-    if (error) throw error;
+    if (assignError) throw assignError;
 
-    res.json(data || []);
+    if (!assignments || assignments.length === 0) return res.json([]);
+
+    // Get submissions for these assignments for THIS student
+    const assignmentIds = assignments.map(a => a.id);
+    const { data: submissions, error: subError } = await supabase
+      .from("assignment_submissions")
+      .select("*")
+      .eq("student_id", sid)
+      .in("assignment_id", assignmentIds);
+
+    if (subError) throw subError;
+
+    const submissionMap = new Map();
+    (submissions || []).forEach(s => submissionMap.set(s.assignment_id, s));
+
+    const formattedData = assignments.map(a => ({
+      ...a,
+      submission: submissionMap.get(a.id) || null
+    }));
+
+    res.json(formattedData);
   } catch (err) {
     console.error('[studentController.getAssignments] Error:', err.message);
     res.status(500).json({ error: "Failed to fetch assignments" });
@@ -534,13 +580,17 @@ export const getAssignments = async (req, res) => {
 export const submitAssignment = async (req, res) => {
   const sid = studentId(req);
   const { id } = req.params; // assignment_id
-  const { file_url, answer_text } = req.body;
-
-  if (!file_url && !answer_text) {
-    return res.status(400).json({ error: "File URL or answer text is required" });
-  }
+  const { answer_text } = req.body;
 
   try {
+    let file_url = req.body.file_url || null;
+    if (req.file) {
+      file_url = await uploadToGCS(req.file);
+    }
+
+    if (!file_url && !answer_text) {
+      return res.status(400).json({ error: "A file upload or answer text is required" });
+    }
     const { data, error } = await supabase
       .from('assignment_submissions')
       .insert({
