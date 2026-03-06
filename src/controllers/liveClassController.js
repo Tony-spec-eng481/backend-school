@@ -1,19 +1,7 @@
 import supabase from '../config/supabase.js';
-import { generateAgoraToken, generateRtmToken, generateScreenShareToken, APP_ID, SCREEN_SHARE_UID_OFFSET } from "../config/agoraConfig.js";
-import axios from 'axios';
+import { createZoomMeeting, deleteZoomMeeting } from "../config/zoomConfig.js";
 
 const getLecturerId = (req) => req.user.id;
-
-// ─── Helper: Agora Cloud Recording credentials ────────────────────────
-const AGORA_CUSTOMER_ID = process.env.AGORA_CUSTOMER_ID;
-const AGORA_CUSTOMER_SECRET = process.env.AGORA_CUSTOMER_SECRET;
-const AGORA_APP_ID = APP_ID;
-
-const getAgoraAuthHeader = () => {
-  if (!AGORA_CUSTOMER_ID || !AGORA_CUSTOMER_SECRET) return null;
-  const credentials = Buffer.from(`${AGORA_CUSTOMER_ID}:${AGORA_CUSTOMER_SECRET}`).toString('base64');
-  return `Basic ${credentials}`;
-};
 
 // ─── CREATE LIVE CLASS ─────────────────────────────────────────────────
 export const createLiveClass = async (req, res) => {
@@ -41,11 +29,15 @@ export const createLiveClass = async (req, res) => {
       return res.status(403).json({ error: "Access denied — not assigned to this unit" });
     }
 
-    // Create Agora channel name
-    const channelName = `class-${Math.random().toString(36).substring(2, 8)}`;
+    // Calculate duration in minutes
+    let durationMinutes = 60;
+    if (start_time && end_time) {
+      const diff = new Date(end_time).getTime() - new Date(start_time).getTime();
+      durationMinutes = Math.max(Math.round(diff / 60000), 30);
+    }
 
-    // Generate temporary token for lecturer (publisher) — 2 hours
-    const token = generateAgoraToken(channelName, 0, "publisher", 2 * 3600);
+    // Create Zoom meeting
+    const zoomMeeting = await createZoomMeeting(title, start_time, durationMinutes);
 
     // Save to database
     const { data, error } = await supabase
@@ -56,8 +48,11 @@ export const createLiveClass = async (req, res) => {
         title,
         start_time,
         end_time,
-        live_url: channelName,
-        token,
+        live_url: zoomMeeting.join_url,
+        zoom_meeting_id: zoomMeeting.id,
+        zoom_join_url: zoomMeeting.join_url,
+        zoom_start_url: zoomMeeting.start_url,
+        token: zoomMeeting.password || null,
         status: "scheduled",
       })
       .select()
@@ -65,13 +60,14 @@ export const createLiveClass = async (req, res) => {
 
     if (error) throw error;
 
-    console.log(`[liveClassController.createLiveClass] Created class "${title}" on channel ${channelName}`);
+    console.log(`[liveClassController.createLiveClass] Created class "${title}" with Zoom Meeting ID ${zoomMeeting.id}`);
     res.status(201).json({
       ...data,
-      agora: {
-        appId: AGORA_APP_ID,
-        channel: channelName,
-        token,
+      zoom: {
+        meetingId: zoomMeeting.id,
+        joinUrl: zoomMeeting.join_url,
+        startUrl: zoomMeeting.start_url,
+        password: zoomMeeting.password,
       },
     });
   } catch (error) {
@@ -102,15 +98,11 @@ export const getLiveClasses = async (req, res) => {
   }
 };
 
-// ─── GET AGORA TOKEN ───────────────────────────────────────────────────
-export const getAgoraToken = async (req, res) => {
-  const { channel } = req.query;
+// ─── GET ZOOM JOIN INFO ────────────────────────────────────────────────
+export const getZoomJoinInfo = async (req, res) => {
+  const { id } = req.params;
   const userId = req.user.id;
   const userRole = req.user.role;
-
-  if (!channel) {
-    return res.status(400).json({ error: "Channel name is required" });
-  }
 
   try {
     // Fetch user name
@@ -119,57 +111,40 @@ export const getAgoraToken = async (req, res) => {
       .select('name, email')
       .eq('id', userId)
       .single();
-    
+
     const userName = userData?.name || userData?.email || 'User';
 
-    // Verify the class exists in the database
+    // Get the live class
     const { data: liveClass, error: classError } = await supabase
       .from("live_classes")
-      .select("id, teacher_id")
-      .eq("live_url", channel)
+      .select("id, teacher_id, title, start_time, end_time, status, zoom_meeting_id, zoom_join_url, zoom_start_url, token")
+      .eq("id", id)
       .maybeSingle();
 
     if (classError) throw classError;
+    if (!liveClass) return res.status(404).json({ error: "Class not found" });
 
-    // Determine the user's classroom role
-    const isTeacher = (liveClass && liveClass.teacher_id === userId) ||
+    // Determine if user is the teacher
+    const isTeacher = (liveClass.teacher_id === userId) ||
                       userRole === 'teacher' || userRole === 'lecturer';
 
-    // Generate a numeric UID from the user ID (Agora requires numeric UIDs)
-    const numericUid = Math.abs(userId.split('').reduce((acc, char) => {
-      return ((acc << 5) - acc) + char.charCodeAt(0);
-    }, 0)) % 1000000;
+    console.log(`[liveClassController.getZoomJoinInfo] User ${userId} (${isTeacher ? 'teacher' : 'student'}) requesting join info for class ${id}`);
 
-    // Both roles get publisher token (both can stream audio/video)
-    const token = generateAgoraToken(channel, numericUid, "publisher", 2 * 3600);
-
-    // Generate RTM token for chat
-    const rtmUserId = userId.replace(/[^a-zA-Z0-9]/g, '').substring(0, 64);
-    const rtmToken = generateRtmToken(rtmUserId, 2 * 3600);
-
-    // Generate a dedicated screen share token with offset UID
-    const { token: screenShareToken, screenShareUid } = generateScreenShareToken(
-      channel,
-      numericUid,
-      2 * 3600
-    );
-
-    console.log(`[liveClassController.getAgoraToken] Token generated for user ${userId} on channel ${channel}`);
     res.json({
-      appId: AGORA_APP_ID,
-      token,
-      rtmToken,
-      screenShareToken,
-      screenShareUid,
+      id: liveClass.id,
+      title: liveClass.title,
+      startTime: liveClass.start_time,
+      endTime: liveClass.end_time,
+      status: liveClass.status,
       role: isTeacher ? 'teacher' : 'student',
-      uid: numericUid,
       userName,
-      rtmUserId,
-      classId: liveClass?.id || null,
+      zoomMeetingId: liveClass.zoom_meeting_id,
+      joinUrl: isTeacher ? liveClass.zoom_start_url : liveClass.zoom_join_url,
+      password: liveClass.token,
     });
   } catch (error) {
-    console.error("[liveClassController.getAgoraToken] Error:", error.message);
-    res.status(500).json({ error: "Failed to generate token" });
+    console.error("[liveClassController.getZoomJoinInfo] Error:", error.message);
+    res.status(500).json({ error: "Failed to get join info" });
   }
 };
 
@@ -224,7 +199,7 @@ export const deleteLiveClass = async (req, res) => {
   try {
     const { data: liveClass, error: fetchError } = await supabase
       .from("live_classes")
-      .select("teacher_id, status")
+      .select("teacher_id, status, zoom_meeting_id")
       .eq("id", id)
       .maybeSingle();
 
@@ -235,6 +210,17 @@ export const deleteLiveClass = async (req, res) => {
     }
     if (liveClass.status === 'live') {
       return res.status(400).json({ error: "Cannot delete a live class. End it first." });
+    }
+
+    // Delete the Zoom meeting if it exists
+    if (liveClass.zoom_meeting_id) {
+      try {
+        await deleteZoomMeeting(liveClass.zoom_meeting_id);
+        console.log(`[liveClassController.deleteLiveClass] Zoom meeting ${liveClass.zoom_meeting_id} deleted`);
+      } catch (zoomErr) {
+        console.warn("[liveClassController.deleteLiveClass] Failed to delete Zoom meeting:", zoomErr.message);
+        // Continue with DB deletion even if Zoom delete fails
+      }
     }
 
     const { error } = await supabase
@@ -257,10 +243,9 @@ export const getSessionInfo = async (req, res) => {
   const { id } = req.params;
 
   try {
-    // Only select columns that exist in the schema
     const { data, error } = await supabase
       .from("live_classes")
-      .select("id, title, teacher_id, unit_id, status, start_time, end_time, recording_url, created_at")
+      .select("id, title, teacher_id, unit_id, status, start_time, end_time, recording_url, zoom_meeting_id, zoom_join_url, created_at")
       .eq("id", id)
       .maybeSingle();
 
@@ -276,153 +261,13 @@ export const getSessionInfo = async (req, res) => {
       startTime: data.start_time,
       endTime: data.end_time,
       hasRecording: !!data.recording_url,
+      zoomMeetingId: data.zoom_meeting_id,
+      zoomJoinUrl: data.zoom_join_url,
       createdAt: data.created_at,
     });
   } catch (error) {
     console.error("[liveClassController.getSessionInfo] Error:", error.message);
     res.status(500).json({ error: "Failed to get session info" });
-  }
-};
-
-// ─── START CLOUD RECORDING ─────────────────────────────────────────────
-export const startRecording = async (req, res) => {
-  const { channel, classId } = req.body;
-  const authHeader = getAgoraAuthHeader();
-
-  if (!authHeader) {
-    return res.status(503).json({
-      error: "Cloud Recording not configured. Set AGORA_CUSTOMER_ID and AGORA_CUSTOMER_SECRET."
-    });
-  }
-
-  if (!channel || !classId) {
-    return res.status(400).json({ error: "channel and classId are required" });
-  }
-
-  try {
-    // Step 1: Acquire recording resource
-    const acquireRes = await axios.post(
-      `https://api.agora.io/v1/apps/${AGORA_APP_ID}/cloud_recording/acquire`,
-      {
-        cname: channel,
-        uid: "1",
-        clientRequest: {
-          resourceExpiredHour: 24,
-        },
-      },
-      { headers: { Authorization: authHeader, 'Content-Type': 'application/json' } }
-    );
-
-    const resourceId = acquireRes.data.resourceId;
-
-    // Step 2: Generate a token for the recording bot
-    const recordingToken = generateAgoraToken(channel, 1, "subscriber", 2 * 3600);
-
-    // Step 3: Start recording
-    const startRes = await axios.post(
-      `https://api.agora.io/v1/apps/${AGORA_APP_ID}/cloud_recording/resourceid/${resourceId}/mode/mix/start`,
-      {
-        cname: channel,
-        uid: "1",
-        clientRequest: {
-          token: recordingToken,
-          recordingConfig: {
-            maxIdleTime: 300,
-            streamTypes: 2,
-            channelType: 1,
-            videoStreamType: 0,
-            transcodingConfig: {
-              height: 720,
-              width: 1280,
-              bitrate: 2260,
-              fps: 30,
-              mixedVideoLayout: 1,
-            },
-          },
-          storageConfig: {
-            vendor: 0,
-            region: 0,
-            bucket: process.env.AGORA_STORAGE_BUCKET || "",
-            accessKey: process.env.AGORA_STORAGE_ACCESS_KEY || "",
-            secretKey: process.env.AGORA_STORAGE_SECRET_KEY || "",
-          },
-        },
-      },
-      { headers: { Authorization: authHeader, 'Content-Type': 'application/json' } }
-    );
-
-    const sid = startRes.data.sid;
-
-    // Step 4: Store recording info in recording_url as JSON metadata
-    const recordingMeta = JSON.stringify({ resourceId, sid, status: 'recording', startedAt: new Date().toISOString() });
-    await supabase
-      .from("live_classes")
-      .update({ recording_url: recordingMeta })
-      .eq("id", classId);
-
-    console.log(`[liveClassController.startRecording] Recording started for class ${classId}`);
-    res.json({
-      message: "Recording started",
-      resourceId,
-      sid,
-    });
-  } catch (error) {
-    console.error("[liveClassController.startRecording] Error:", error?.response?.data || error.message);
-    res.status(500).json({ error: "Failed to start recording" });
-  }
-};
-
-// ─── STOP CLOUD RECORDING ──────────────────────────────────────────────
-export const stopRecording = async (req, res) => {
-  const { channel, classId, resourceId, sid } = req.body;
-  const authHeader = getAgoraAuthHeader();
-
-  if (!authHeader) {
-    return res.status(503).json({
-      error: "Cloud Recording not configured."
-    });
-  }
-
-  if (!channel || !resourceId || !sid) {
-    return res.status(400).json({ error: "channel, resourceId, and sid are required" });
-  }
-
-  try {
-    const stopRes = await axios.post(
-      `https://api.agora.io/v1/apps/${AGORA_APP_ID}/cloud_recording/resourceid/${resourceId}/sid/${sid}/mode/mix/stop`,
-      {
-        cname: channel,
-        uid: "1",
-        clientRequest: {},
-      },
-      { headers: { Authorization: authHeader, 'Content-Type': 'application/json' } }
-    );
-
-    // Update database with file list
-    if (classId) {
-      const fileList = stopRes.data?.serverResponse?.fileList;
-      const recordingData = JSON.stringify({
-        resourceId,
-        sid,
-        status: 'stopped',
-        stoppedAt: new Date().toISOString(),
-        fileList: fileList || []
-      });
-      
-      await supabase
-        .from("live_classes")
-        .update({ recording_url: recordingData })
-        .eq("id", classId);
-    }
-
-    console.log(`[liveClassController.stopRecording] Recording stopped for class ${classId}`);
-    res.json({
-      message: "Recording stopped",
-      serverResponse: stopRes.data.serverResponse,
-    });
-  } catch (error) {
-    console.error("[liveClassController.stopRecording] Error:", error?.response?.data || error.message);
-    res.status(500).json({ error: "Failed to stop recording" });
   }
 };
 

@@ -519,7 +519,8 @@ export const getLiveClasses = async (req, res) => {
       ...lc,
       startTime: lc.start_time,
       endTime: lc.end_time,
-      course: lc.unit?.title
+      course: lc.unit?.title,
+      recordingUrl: lc.recording_url,
     }));
 
     res.json(shaped);

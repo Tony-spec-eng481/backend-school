@@ -111,7 +111,10 @@ CREATE TABLE public.live_classes (
     recording_url text,
     created_at timestamptz,
     updated_at timestamptz,
-    token text
+    token text,
+    zoom_meeting_id bigint,
+    zoom_join_url text,
+    zoom_start_url text
 );
 
 -- Table: program_units

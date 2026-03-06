@@ -768,12 +768,21 @@ export const getLecturerLiveClasses = async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("live_classes")
-      .select("*")
+      .select("*, unit:unit_id(title)")
       .eq("teacher_id", lecturerId)
       .order("start_time", { ascending: true });
 
     if (error) throw error;
-    res.json(data || []);
+
+    const shaped = (data || []).map(lc => ({
+      ...lc,
+      startTime: lc.start_time,
+      endTime: lc.end_time,
+      unitTitle: lc.unit?.title || null,
+      recordingUrl: lc.recording_url,
+    }));
+
+    res.json(shaped);
   } catch (err) {
     console.error("[lecturerController.getLecturerLiveClasses] Error:", err.message);
     res.status(500).json({ error: 'Failed to fetch live classes' });

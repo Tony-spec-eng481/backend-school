@@ -2,13 +2,11 @@ import express from 'express';
 import {
   createLiveClass,
   getLiveClasses,
-  getAgoraToken,
+  getZoomJoinInfo,
   updateClassStatus,
   deleteLiveClass,
-  startRecording,
-  stopRecording,
-  getRecordingInfo,
   getSessionInfo,
+  getRecordingInfo,
   getRecordingDownload,
 } from '../controllers/liveClassController.js';
 import { authenticate, authorizeRoles } from '../middleware/authMiddleware.js';
@@ -20,8 +18,8 @@ router.get('/', authenticate, getLiveClasses);
 router.post('/', authenticate, authorizeRoles('teacher', 'admin', 'lecturer'), createLiveClass);
 router.delete('/:id', authenticate, authorizeRoles('teacher', 'admin', 'lecturer'), deleteLiveClass);
 
-// ─── Agora Tokens ──────────────────────────────────────────────────────
-router.get('/token', authenticate, getAgoraToken);
+// ─── Zoom Join Info ────────────────────────────────────────────────────
+router.get('/join-info/:id', authenticate, getZoomJoinInfo);
 
 // ─── Class Status ──────────────────────────────────────────────────────
 router.patch('/:id/status', authenticate, authorizeRoles('teacher', 'admin', 'lecturer'), updateClassStatus);
@@ -29,9 +27,7 @@ router.patch('/:id/status', authenticate, authorizeRoles('teacher', 'admin', 'le
 // ─── Session Info ──────────────────────────────────────────────────────
 router.get('/:id/session-info', authenticate, getSessionInfo);
 
-// ─── Cloud Recording ───────────────────────────────────────────────────
-router.post('/recording/start', authenticate, authorizeRoles('teacher', 'admin', 'lecturer'), startRecording);
-router.post('/recording/stop', authenticate, authorizeRoles('teacher', 'admin', 'lecturer'), stopRecording);
+// ─── Recording Info ────────────────────────────────────────────────────
 router.get('/recording/:classId', authenticate, getRecordingInfo);
 
 // ─── Recording Download ───────────────────────────────────────────────
