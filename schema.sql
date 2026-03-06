@@ -234,3 +234,20 @@ CREATE TABLE public.users (
     updated_at timestamptz,
     verification_token_expires timestamptz
 );
+
+-- Table: library_resources
+CREATE TABLE public.library_resources (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    title varchar NOT NULL,
+    author varchar,
+    description text,
+    category varchar,
+    resource_type varchar, -- e.g., 'Book', 'Research Paper', 'Video'
+    external_id varchar, -- ID from Open Library or Internet Archive
+    source varchar, -- 'Open Library', 'Internet Archive', 'Internal'
+    url text, -- Direct link to the resource
+    thumbnail_url text,
+    created_at timestamptz DEFAULT now(),
+    updated_at timestamptz DEFAULT now(),
+    PRIMARY KEY (id)
+);
