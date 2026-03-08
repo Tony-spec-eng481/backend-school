@@ -486,11 +486,141 @@ export const markTopicComplete = async (req, res) => {
       }
     }
 
+    // 3. Notify teachers assigned to this unit
+    try {
+      // Find teachers for this unit
+      const { data: lecturerUnits } = await supabase
+        .from('lecturer_units')
+        .select('lecturer_id')
+        .eq('unit_id', (
+          await supabase.from('topics').select('unit_id').eq('id', topicId).single()
+        ).data?.unit_id);
+
+      if (lecturerUnits && lecturerUnits.length > 0) {
+        // Get student name
+        const { data: student } = await supabase
+          .from('users')
+          .select('name')
+          .eq('id', sid)
+          .single();
+
+        // Get topic title
+        const { data: topic } = await supabase
+          .from('topics')
+          .select('title')
+          .eq('id', topicId)
+          .single();
+
+        const notifications = lecturerUnits.map(lu => ({
+          user_id: lu.lecturer_id,
+          student_id: sid,
+          type: 'topic_completion',
+          message: `${student?.name || 'A student'} has completed the topic: "${topic?.title || 'Unknown Topic'}"`,
+          created_at: new Date().toISOString()
+        }));
+
+        await supabase.from('notifications').insert(notifications);
+      }
+    } catch (notifyErr) {
+      console.error('[studentController.markTopicComplete] Notification error:', notifyErr.message);
+      // Don't fail the whole request if notifications fail
+    }
+
     console.log(`[studentController.markTopicComplete] Student ${sid} completed topic ${topicId}`);
     res.json({ success: true });
   } catch (err) {
     console.error('[studentController.markTopicComplete] Error:', err.message);
     res.status(500).json({ error: "Failed to mark topic as complete" });
+  }
+};
+
+/* ================================================================
+   LIVE CLASS ATTENDANCE
+  ================================================================ */
+export const recordLiveClassJoin = async (req, res) => {
+  const sid = studentId(req);
+  const { liveClassId } = req.body;
+
+  if (!liveClassId) {
+    return res.status(400).json({ error: "Live Class ID is required" });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('live_class_attendance')
+      .upsert({
+        live_class_id: liveClassId,
+        student_id: sid,
+        joined_at: new Date().toISOString()
+      }, { onConflict: 'live_class_id, student_id' })
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.json(data);
+  } catch (err) {
+    console.error('[studentController.recordLiveClassJoin] Error:', err.message);
+    res.status(500).json({ error: "Failed to record join" });
+  }
+};
+
+export const recordLiveClassLeave = async (req, res) => {
+  const sid = studentId(req);
+  const { liveClassId } = req.body;
+
+  if (!liveClassId) {
+    return res.status(400).json({ error: "Live Class ID is required" });
+  }
+
+  try {
+    const { error } = await supabase
+      .from('live_class_attendance')
+      .update({ left_at: new Date().toISOString() })
+      .eq('live_class_id', liveClassId)
+      .eq('student_id', sid);
+
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[studentController.recordLiveClassLeave] Error:', err.message);
+    res.status(500).json({ error: "Failed to record leave" });
+  }
+};
+
+/* ================================================================
+   NOTIFICATIONS
+  ================================================================ */
+export const getNotifications = async (req, res) => {
+  const uid = req.user.id;
+  try {
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', uid)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err) {
+    console.error('[studentController.getNotifications] Error:', err.message);
+    res.status(500).json({ error: "Failed to fetch notifications" });
+  }
+};
+
+export const markNotificationRead = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { error } = await supabase
+      .from('notifications')
+      .update({ is_read: true })
+      .eq('id', id)
+      .eq('user_id', req.user.id);
+
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[studentController.markNotificationRead] Error:', err.message);
+    res.status(500).json({ error: "Failed to mark notification as read" });
   }
 };
 

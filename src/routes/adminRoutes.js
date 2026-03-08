@@ -12,6 +12,8 @@ import {
   getPendingCourses,
   updateCourseStatus,
   getAnalytics,
+  getStudentAnalytics,
+  getTeacherAnalytics,
   createDepartment,
   getDepartments,
   updateDepartment,
@@ -51,6 +53,8 @@ router.patch('/courses/:id/status', updateCourseStatus);
 
 // Analytics
 router.get('/analytics', getAnalytics);
+router.get('/analytics/students', getStudentAnalytics);
+router.get('/analytics/teachers', getTeacherAnalytics);
 
 // Departments
 router.post('/departments', createDepartment);

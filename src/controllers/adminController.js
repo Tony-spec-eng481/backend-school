@@ -308,28 +308,294 @@ export const updateCourseStatus = async (req, res) => {
  */
 export const getAnalytics = async (req, res) => {
   try {
-    const [enrollRes, progressRes] = await Promise.all([
-      supabase.from("enrollments").select("id", { count: "exact", head: true }),
+    const today = new Date();
+    const last12Months = [];
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+      last12Months.push({
+        month: d.toLocaleString('default', { month: 'short' }),
+        year: d.getFullYear(),
+        start: new Date(d.getFullYear(), d.getMonth(), 1).toISOString(),
+        end: new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59).toISOString()
+      });
+    }
 
-      supabase
-        .from("progress")
-        .select("id", { count: "exact", head: true })
-        .eq("is_completed", true),
+    const [enrollRes, progressRes, usersCount, coursesCount, monthlyData] = await Promise.all([
+      supabase.from("enrollments").select("id", { count: "exact", head: true }),
+      supabase.from("progress").select("id", { count: "exact", head: true }).eq("is_completed", true),
+      supabase.from("users").select("id", { count: "exact", head: true }),
+      supabase.from("courses").select("id", { count: "exact", head: true }),
+      Promise.all(last12Months.map(async (m) => {
+        const { count } = await supabase
+          .from("enrollments")
+          .select("id", { count: "exact", head: true })
+          .gte("enrolled_at", m.start)
+          .lte("enrolled_at", m.end);
+        return { month: m.month, count: count || 0 };
+      }))
     ]);
 
     const totalEnrollments = enrollRes.count || 0;
     const completedLessons = progressRes.count || 0;
 
     res.json({
+      totalUsers: usersCount.count || 0,
+      totalCourses: coursesCount.count || 0,
       totalEnrollments,
       completedLessons,
-      engagementRate: totalEnrollments
-        ? (completedLessons / totalEnrollments).toFixed(2)
-        : 0,
+      engagementRate: totalEnrollments ? (completedLessons / totalEnrollments).toFixed(2) : 0,
+      monthlyEnrollments: monthlyData
     });
   } catch (error) {
     console.error("[adminController.getAnalytics] Error:", error.message);
     res.status(500).json({ error: "Failed to fetch analytics" });
+  }
+};
+
+export const getStudentAnalytics = async (req, res) => {
+  try {
+    const [
+      { count: totalStudents },
+      { data: enrollments },
+      { data: courses },
+      { data: programUnits },
+      { data: topics },
+      { data: progress },
+      { data: assignments },
+      { data: submissions },
+      { data: liveClasses },
+      { data: attendance }
+    ] = await Promise.all([
+      supabase.from("users").select("id", { count: "exact", head: true }).eq("role", "student"),
+      supabase.from("enrollments").select("program_id"),
+      supabase.from("courses").select("id, title"),
+      supabase.from("program_units").select("program_id, unit_id"),
+      supabase.from("topics").select("id, unit_id"),
+      supabase.from("progress").select("topic_id").eq("is_completed", true),
+      supabase.from("assignments").select("id, unit_id"),
+      supabase.from("assignment_submissions").select("assignment_id"),
+      supabase.from("live_classes").select("id, unit_id, status"),
+      supabase.from("live_class_attendance").select("live_class_id")
+    ]);
+
+    const totalEnrollments = (enrollments || []).length;
+
+    // Build lookup maps for units -> program
+    const unitToPrograms = {};
+    (programUnits || []).forEach(pu => {
+      if (!unitToPrograms[pu.unit_id]) unitToPrograms[pu.unit_id] = [];
+      unitToPrograms[pu.unit_id].push(pu.program_id);
+    });
+
+    // Topic -> Unit
+    const topicToUnit = {};
+    (topics || []).forEach(t => topicToUnit[t.id] = t.unit_id);
+
+    // Assignment -> Unit
+    const assignmentToUnit = {};
+    (assignments || []).forEach(a => assignmentToUnit[a.id] = a.unit_id);
+
+    // LiveClass -> Unit
+    const liveClassToUnit = {};
+    (liveClasses || []).forEach(lc => liveClassToUnit[lc.id] = lc.unit_id);
+
+    // Initialize course stats
+    const courseStats = {};
+    (courses || []).forEach(c => {
+      courseStats[c.id] = {
+        id: c.id,
+        title: c.title,
+        totalStudents: 0,
+        completedUnits: 0,
+        assignmentsGiven: 0,
+        assignmentsSubmitted: 0,
+        assignmentsNotSubmitted: 0,
+        successfulLiveClasses: 0,
+        failedLiveClasses: 0,
+        studentAttendance: 0,
+        unitIds: new Set()
+      };
+    });
+
+    // Populate students per course
+    (enrollments || []).forEach(e => {
+      if (courseStats[e.program_id]) {
+        courseStats[e.program_id].totalStudents++;
+      }
+    });
+
+    // Populate units per course
+    (programUnits || []).forEach(pu => {
+      if (courseStats[pu.program_id]) {
+        courseStats[pu.program_id].unitIds.add(pu.unit_id);
+      }
+    });
+
+    // Completed units (using topics as proxy since progress is per topic)
+    (progress || []).forEach(p => {
+      const unitId = topicToUnit[p.topic_id];
+      if (unitId && unitToPrograms[unitId]) {
+        unitToPrograms[unitId].forEach(progId => {
+          if (courseStats[progId]) courseStats[progId].completedUnits++; // Each topic completion counts towards engagement
+        });
+      }
+    });
+
+    // Assignments given
+    (assignments || []).forEach(a => {
+      const unitId = a.unit_id;
+      if (unitId && unitToPrograms[unitId]) {
+        unitToPrograms[unitId].forEach(progId => {
+          if (courseStats[progId]) courseStats[progId].assignmentsGiven++;
+        });
+      }
+    });
+
+    // Assignments submitted
+    (submissions || []).forEach(s => {
+      const unitId = assignmentToUnit[s.assignment_id];
+      if (unitId && unitToPrograms[unitId]) {
+        unitToPrograms[unitId].forEach(progId => {
+          if (courseStats[progId]) courseStats[progId].assignmentsSubmitted++;
+        });
+      }
+    });
+
+    // Live classes
+    (liveClasses || []).forEach(lc => {
+      const unitId = lc.unit_id;
+      const isSuccess = ['completed', 'finished', 'success'].includes((lc.status || '').toLowerCase());
+      const isFailed = ['failed', 'cancelled'].includes((lc.status || '').toLowerCase());
+      
+      if (unitId && unitToPrograms[unitId]) {
+        unitToPrograms[unitId].forEach(progId => {
+          if (courseStats[progId]) {
+            if (isSuccess) courseStats[progId].successfulLiveClasses++;
+            else if (isFailed) courseStats[progId].failedLiveClasses++;
+            // If status is not success or failed, we don't count it yet to maintain accuracy
+          }
+        });
+      }
+    });
+
+    // Attendance
+    (attendance || []).forEach(att => {
+      const unitId = liveClassToUnit[att.live_class_id];
+      if (unitId && unitToPrograms[unitId]) {
+        unitToPrograms[unitId].forEach(progId => {
+          if (courseStats[progId]) courseStats[progId].studentAttendance++;
+        });
+      }
+    });
+
+    // Finalize assignments not submitted calculation
+    Object.values(courseStats).forEach(cs => {
+      cs.assignmentsNotSubmitted = Math.max(0, (cs.totalStudents * cs.assignmentsGiven) - cs.assignmentsSubmitted);
+      delete cs.unitIds; // cleanup
+    });
+
+    res.json({
+      totalStudents: totalStudents || 0,
+      totalCoursesEnrolled: totalEnrollments,
+      courseAnalytics: Object.values(courseStats).filter(c => c.totalStudents > 0) // Only return courses with enrollments
+    });
+  } catch (error) {
+    console.error("[adminController.getStudentAnalytics] Error:", error.message);
+    res.status(500).json({ error: "Failed to fetch student analytics" });
+  }
+};
+
+export const getTeacherAnalytics = async (req, res) => {
+  try {
+    const [
+      { count: totalTeachers },
+      { data: courses },
+      { data: programUnits },
+      { data: units },
+      { data: assignments },
+      { data: liveClasses },
+      { data: lecturerUnits }
+    ] = await Promise.all([
+      supabase.from("users").select("id", { count: "exact", head: true }).eq("role", "teacher"),
+      supabase.from("courses").select("id, title"),
+      supabase.from("program_units").select("program_id, unit_id"),
+      supabase.from("units").select("id, title"),
+      supabase.from("assignments").select("id, teacher_id, unit_id"),
+      supabase.from("live_classes").select("id, teacher_id, unit_id"),
+      supabase.from("lecturer_units").select("lecturer_id, unit_id, users(name)")
+    ]);
+
+    // Courses with and without units
+    const coursePrograms = new Set((programUnits || []).map(pu => pu.program_id));
+    const coursesWithUnitsCount = (courses || []).filter(c => coursePrograms.has(c.id)).length;
+    const coursesWithoutUnitsCount = (courses || []).filter(c => !coursePrograms.has(c.id)).length;
+
+    // Output:
+    // Units taught and assignments administered in each unit
+    // Teacher interaction (assignments created, live classes hosted)
+    
+    // Map units
+    const unitMap = {};
+    (units || []).forEach(u => {
+      unitMap[u.id] = {
+        id: u.id,
+        title: u.title,
+        assignmentsAdministered: 0,
+        liveClassesHosted: 0
+      };
+    });
+
+    (assignments || []).forEach(a => {
+      if (unitMap[a.unit_id]) unitMap[a.unit_id].assignmentsAdministered++;
+    });
+    
+    (liveClasses || []).forEach(lc => {
+      if (unitMap[lc.unit_id]) unitMap[lc.unit_id].liveClassesHosted++;
+    });
+
+    const activeUnits = Object.values(unitMap).filter(u => u.assignmentsAdministered > 0 || u.liveClassesHosted > 0);
+
+    // Teacher global interactions
+    const teacherMap = {};
+    (lecturerUnits || []).forEach(lu => {
+      const tId = lu.lecturer_id;
+      if (!teacherMap[tId]) {
+        teacherMap[tId] = {
+          name: lu.users?.name || "Teacher",
+          unitsTaught: 0,
+          assignmentsCreated: 0,
+          liveClassesHosted: 0
+        };
+      }
+      teacherMap[tId].unitsTaught++;
+    });
+
+    (assignments || []).forEach(a => {
+      if (a.teacher_id && teacherMap[a.teacher_id]) {
+        teacherMap[a.teacher_id].assignmentsCreated++;
+      }
+    });
+
+    (liveClasses || []).forEach(lc => {
+      if (lc.teacher_id && teacherMap[lc.teacher_id]) {
+        teacherMap[lc.teacher_id].liveClassesHosted++;
+      }
+    });
+
+    const teacherInteractions = Object.values(teacherMap).sort((a, b) => b.unitsTaught - a.unitsTaught);
+
+    res.json({
+      totalTeachers: totalTeachers || 0,
+      coursesOverview: {
+        withUnits: coursesWithUnitsCount,
+        withoutUnits: coursesWithoutUnitsCount
+      },
+      unitsActivity: activeUnits,
+      teacherInteractions
+    });
+  } catch (error) {
+    console.error("[adminController.getTeacherAnalytics] Error:", error.message);
+    res.status(500).json({ error: "Failed to fetch teacher analytics" });
   }
 };
 

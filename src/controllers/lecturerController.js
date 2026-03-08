@@ -795,17 +795,12 @@ export const updateTeacherProfile = async (req, res) => {
     const userId = req.user.id;
     const { national_id_number } = req.body;
 
-    // Build update object with only provided values
     const updates = {};
     if (national_id_number) updates.national_id_number = national_id_number;
 
     if (req.files) {
-      if (req.files.nationalIdPhoto?.[0]) {
-        updates.national_id_photo_url = await uploadToGCS(req.files.nationalIdPhoto[0]);
-      }
-      if (req.files.profilePhoto?.[0]) {
-        updates.profile_photo_url = await uploadToGCS(req.files.profilePhoto[0]);
-      }
+      if (req.files.nationalIdPhoto?.[0]) updates.national_id_photo_url = await uploadToGCS(req.files.nationalIdPhoto[0]);
+      if (req.files.profilePhoto?.[0]) updates.profile_photo_url = await uploadToGCS(req.files.profilePhoto[0]);
     }
 
     if (Object.keys(updates).length === 0) {
@@ -822,14 +817,106 @@ export const updateTeacherProfile = async (req, res) => {
       .single();
 
     if (error) throw error;
-
-    console.log(`[Auth] Teacher profile updated for user ${userId}`);
     res.json({ message: "Profile updated successfully", teacherDetails: updatedDetails });
   } catch (err) {
-    console.error("[Auth] Update teacher profile error:", err.message);
+    console.error("[lecturerController.updateTeacherProfile] Error:", err.message);
     res.status(500).json({ error: "Failed to update teacher profile" });
   }
 };
+
+/**
+ * GET /api/lecturer/units/:unitId/student-progress
+ */
+export const getStudentProgressByUnit = async (req, res) => {
+  const { unitId } = req.params;
+  const tid = getLecturerId(req);
+
+  try {
+    // 1. Security check
+    const { data: access } = await supabase
+      .from('lecturer_units')
+      .select('program_id')
+      .eq('lecturer_id', tid)
+      .eq('unit_id', unitId)
+      .maybeSingle();
+
+    if (!access) return res.status(403).json({ error: 'Access denied' });
+
+    // 2. Get all students enrolled in the program that this unit belongs to
+    const { data: enrollments } = await supabase
+      .from('enrollments')
+      .select(`
+        student_id,
+        user:student_id ( id, name, email, student_details(student_id) )
+      `)
+      .eq('program_id', access.program_id);
+
+    if (!enrollments || enrollments.length === 0) return res.json([]);
+
+    // 3. Get all topics for this unit
+    const { data: topics } = await supabase
+      .from('topics')
+      .select('id')
+      .eq('unit_id', unitId);
+
+    const totalTopics = topics?.length || 0;
+    const topicIds = (topics || []).map(t => t.id);
+
+    // 4. Get all assignments for this unit
+    const { data: assignments } = await supabase
+      .from('assignments')
+      .select('id')
+      .eq('unit_id', unitId);
+
+    const totalAssignments = assignments?.length || 0;
+    const assignmentIds = (assignments || []).map(a => a.id);
+
+    // 5. Calculate progress for each student
+    const result = await Promise.all(enrollments.map(async (e) => {
+      const u = e.user;
+      if (!u) return null;
+
+      let completedCount = 0;
+      if (totalTopics > 0) {
+        const { count } = await supabase
+          .from('progress')
+          .select('*', { count: 'exact', head: true })
+          .eq('student_id', u.id)
+          .eq('is_completed', true)
+          .in('topic_id', topicIds);
+        completedCount = count ?? 0;
+      }
+
+      let completedAssignments = 0;
+      if (totalAssignments > 0) {
+        const { count } = await supabase
+          .from('assignment_submissions')
+          .select('*', { count: 'exact', head: true })
+          .eq('student_id', u.id)
+          .in('assignment_id', assignmentIds);
+        completedAssignments = count ?? 0;
+      }
+
+      return {
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        student_id: u.student_details?.[0]?.student_id || 'N/A',
+        totalTopics,
+        completedTopics: completedCount,
+        totalAssignments,
+        completedAssignments,
+        progressPercentage: totalTopics > 0 ? Math.round((completedCount / totalTopics) * 100) : 0
+      };
+    }));
+
+    res.json(result.filter(Boolean));
+  } catch (err) {
+    console.error('[lecturerController.getStudentProgressByUnit] Error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch student progress' });
+  }
+};
+
 
 /**
  * GET /api/lecturer/profile

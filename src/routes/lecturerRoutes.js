@@ -153,6 +153,14 @@ router.get(
   authorizeRoles("teacher", "lecturer"),
   lecturerController.getLecturerLiveClasses,
 );
+
+// Student Progress
+router.get(
+  "/units/:unitId/student-progress",
+  authenticate,
+  authorizeRoles("teacher", "lecturer"),
+  lecturerController.getStudentProgressByUnit,
+);
 router.patch(
   "/update-teacher-profile",
   authenticate,

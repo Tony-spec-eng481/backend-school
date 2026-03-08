@@ -14,7 +14,11 @@ import {
   getTickets,
   createTicket,
   getAvailableCourses,
-  enrollInCourse
+  enrollInCourse,
+  recordLiveClassJoin,
+  recordLiveClassLeave,
+  getNotifications,
+  markNotificationRead
 } from '../controllers/studentController.js';
 
 import upload from '../middleware/uploadMiddleware.js';
@@ -38,5 +42,13 @@ router.get('/live-classes', ...guard, getLiveClasses);
 router.get('/announcements', ...guard, getAnnouncements);
 router.get('/tickets', ...guard, getTickets);
 router.post('/tickets', ...guard, createTicket);
+
+// Live Class Attendance
+router.post('/live-classes/join', ...guard, recordLiveClassJoin);
+router.post('/live-classes/leave', ...guard, recordLiveClassLeave);
+
+// Notifications
+router.get('/notifications', authenticate, authorizeRoles('student', 'teacher', 'lecturer'), getNotifications);
+router.patch('/notifications/:id/read', authenticate, authorizeRoles('student', 'teacher', 'lecturer'), markNotificationRead);
 
 export default router;   
